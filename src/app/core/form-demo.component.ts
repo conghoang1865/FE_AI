@@ -1,4 +1,4 @@
-import { Component, ChangeDetectionStrategy, signal } from '@angular/core';
+import { Component, ChangeDetectionStrategy, inject } from '@angular/core';
 import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { CommonModule } from '@angular/common';
 import {
@@ -11,6 +11,12 @@ import {
   SelectOption,
   RadioOptionType,
 } from './index';
+import {
+  FormStateService,
+  FormOptionsService,
+  FormValidationService,
+  FormUtilityService,
+} from './services';
 
 @Component({
   selector: 'app-core-form-demo',
@@ -28,12 +34,19 @@ import {
   template: `
     <div class="form-container">
       <h1>Core Form Components Demo</h1>
+
+      @if (formStateService.errorMessage()) {
+        <div class="error-message">
+          {{ formStateService.errorMessage() }}
+        </div>
+      }
+
       <form [formGroup]="form" (ngSubmit)="onSubmit()" class="demo-form">
         <!-- Text Input -->
         <app-input
           formControlName="firstName"
           label="First Name"
-          [config]="{ placeholder: 'Enter your first name', required: true }"
+          [config]="{ placeholder: 'Enter your first name', required: true, error: getFieldError('firstName') }"
           [hint]="'This field is required'"
         />
 
@@ -41,7 +54,7 @@ import {
         <app-input
           formControlName="email"
           label="Email"
-          [config]="{ type: 'email', placeholder: 'Enter your email', required: true }"
+          [config]="{ type: 'email', placeholder: 'Enter your email', required: true, error: getFieldError('email') }"
           [hint]="'Please provide a valid email address'"
         />
 
@@ -49,8 +62,8 @@ import {
         <app-select
           formControlName="country"
           label="Country"
-          [options]="countryOptions"
-          [config]="{ placeholder: 'Select a country', required: true }"
+          [options]="formOptionsService.countryOptions()"
+          [config]="{ placeholder: 'Select a country', required: true, error: getFieldError('country') }"
           [hint]="'Choose your country of residence'"
         />
 
@@ -58,7 +71,7 @@ import {
         <app-textarea
           formControlName="bio"
           label="Biography"
-          [config]="{ rows: 5, maxLength: 500, placeholder: 'Tell us about yourself' }"
+          [config]="{ rows: 5, maxLength: 500, placeholder: 'Tell us about yourself', error: getFieldError('bio') }"
           [hint]="'Maximum 500 characters'"
         />
 
@@ -66,7 +79,7 @@ import {
         <app-date
           formControlName="birthDate"
           label="Birth Date"
-          [config]="{ required: true, type: 'date' }"
+          [config]="{ required: true, type: 'date', error: getFieldError('birthDate') }"
         />
 
         <!-- Checkbox -->
@@ -74,21 +87,25 @@ import {
           formControlName="agreeTerms"
           id="agree-terms"
           label="I agree to the terms and conditions"
-          [hint]="'You must agree to continue'"
+          [hint]="getFieldError('agreeTerms') || 'You must agree to continue'"
         />
 
         <!-- Radio -->
         <app-radio
           formControlName="gender"
           label="Gender"
-          [options]="genderOptions"
-          [config]="{ required: true }"
+          [options]="formOptionsService.genderOptions()"
+          [config]="{ required: true, error: getFieldError('gender') }"
         />
 
         <!-- Submit Button -->
         <div class="form-actions">
-          <button type="submit" class="submit-button" [disabled]="!form.valid">
-            Submit Form
+          <button
+            type="submit"
+            class="submit-button"
+            [disabled]="!form.valid || formStateService.loading()"
+          >
+            {{ formStateService.loading() ? 'Submitting...' : 'Submit Form' }}
           </button>
           <button type="button" class="reset-button" (click)="onReset()">
             Reset
@@ -96,7 +113,7 @@ import {
         </div>
 
         <!-- Form State Display -->
-        @if (submitted()) {
+        @if (formStateService.submitted()) {
           <div class="form-result">
             <h3>Form Values:</h3>
             <pre>{{ form.value | json }}</pre>
@@ -118,6 +135,16 @@ import {
       margin-bottom: 2rem;
       font-size: 1.875rem;
       color: #1f2937;
+    }
+
+    .error-message {
+      margin-bottom: 1rem;
+      padding: 0.75rem 1rem;
+      background-color: #fee2e2;
+      border: 1px solid #fca5a5;
+      border-radius: 0.375rem;
+      color: #991b1b;
+      font-weight: 500;
     }
 
     .demo-form {
@@ -192,27 +219,18 @@ import {
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class CoreFormDemoComponent {
+  private readonly formBuilder = inject(FormBuilder);
+  readonly formStateService = inject(FormStateService);
+  readonly formOptionsService = inject(FormOptionsService);
+  private readonly formValidationService = inject(FormValidationService);
+  private readonly formUtilityService = inject(FormUtilityService);
+
   form: FormGroup;
-  submitted = signal(false);
 
-  countryOptions: SelectOption[] = [
-    { value: 'us', label: 'United States' },
-    { value: 'uk', label: 'United Kingdom' },
-    { value: 'ca', label: 'Canada' },
-    { value: 'au', label: 'Australia' },
-    { value: 'de', label: 'Germany' },
-  ];
-
-  genderOptions: RadioOptionType[] = [
-    { value: 'male', label: 'Male' },
-    { value: 'female', label: 'Female' },
-    { value: 'other', label: 'Other' },
-  ];
-
-  constructor(private formBuilder: FormBuilder) {
+  constructor() {
     this.form = this.formBuilder.group({
       firstName: ['', [Validators.required, Validators.minLength(2)]],
-      email: ['', [Validators.required, Validators.email]],
+      email: ['', [Validators.required, this.formValidationService.emailValidator()]],
       country: ['', Validators.required],
       bio: [''],
       birthDate: ['', Validators.required],
@@ -222,14 +240,26 @@ export class CoreFormDemoComponent {
   }
 
   onSubmit(): void {
-    if (this.form.valid) {
-      this.submitted.set(true);
-      console.log('Form submitted:', this.form.value);
-    }
+    this.formStateService.submitForm(this.form, (data) => {
+      console.log('Form submitted:', data);
+      // Simulate async operation
+      setTimeout(() => {
+        this.formStateService.setLoading(false);
+        this.formStateService.setSubmitted(true);
+      }, 500);
+    });
   }
 
   onReset(): void {
-    this.form.reset();
-    this.submitted.set(false);
+    this.formUtilityService.resetForm(this.form);
+    this.formStateService.reset();
+  }
+
+  getFieldError(fieldName: string): string | undefined {
+    const control = this.form.get(fieldName);
+    if (!control || !control.errors || (!control.dirty && !control.touched)) {
+      return undefined;
+    }
+    return this.formValidationService.getErrorMessage(fieldName, control.errors) || undefined;
   }
 }
